@@ -154,13 +154,13 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 		    // write a chunk
 		    if _, err := w.Write(buf[:n]); err != nil {
-			panic(err)
-		    }
+				//panic(err)
+				break
+		    } else if f, ok := w.(http.Flusher); ok {
+				// Response writer with flush support.
+				f.Flush()
+			}
 
-		    // Response writer with flush support.
-		    if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		    }
 		}
 
 		if err = resp.Body.Close(); err != nil {
