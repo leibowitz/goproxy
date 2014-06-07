@@ -6,7 +6,7 @@ import (
 	"code.google.com/p/go-charset/charset"
 	_ "code.google.com/p/go-charset/data"
 	"errors"
-	"github.com/elazarl/goproxy"
+	"github.com/leibowitz/goproxy"
 	"io"
 	"io/ioutil"
 	"net/http"
