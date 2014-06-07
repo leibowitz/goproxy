@@ -1,30 +1,3 @@
-# Breaking Changes Ahead
-
-###  Rational
-
-Adding the `RoundTripDetails` to the `ProxyCtx` struct was a mistake.
-Sometimes one need to get the details of the roundtrip, but usually not.
-
-Instead of clobbering the entire library, we should have a way to
-use a custom HTTP `Transport`.
-
-As far as I know, no one is using the `RoundTripDetails` field in `ProxyCtx`.
-Thus, it will be removed in the next week (12/2/2014).
-
-Please open an issue to discuss the change if you think it's not necessary.
-
-The change will reside at the `customtransport` branch until it'll be merged
-back to master in a week or so.
-
-### Change
-
-  1. Field `ProxyHttpServer.Tr` will be a regular `*http.Transport`.
-  2. We'll add field `ProxyCtx.TrFunc func (ctx *ProxyCtx, req *http.Request) (*http.Response, error)`.
-  3. We'll keep the `goproxy/transport` package.
-
-In order to retain previous behavior, set `ProxyCtx.TrFunc` to a function using `goproxy/transport`
-and save the `RoundTripDetails` into the context for further usage.
-
 # Introduction
 
 Package goproxy provides a customizable HTTP proxy library for Go (golang),
@@ -79,8 +52,7 @@ This line will add `X-GoProxy: yxorPoG-X` header to all requests sent through th
         func(r *http.Request,ctx *goproxy.ProxyCtx)(*http.Request,*http.Response) {
             r.Header.Set("X-GoProxy","yxorPoG-X")
             return r,nil
-        }
-    )
+        })
 
 `DoFunc` will process all incoming requests to the proxy. It will add a header to the request
 and return it. The proxy will send the modified request.
@@ -109,6 +81,11 @@ return a response. If the time is between 8:00am and 17:00pm, we will neglect th
 return a precanned text response saying "do not waste your time".
 
 See additional examples in the examples directory.
+
+# What's New
+
+  1. Ability to `Hijack` CONNECT requests. See
+[the eavesdropper example](https://github.com/elazarl/goproxy/blob/master/examples/eavesdropper/main.go#L17)
 
 # License
 

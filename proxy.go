@@ -2,9 +2,9 @@ package goproxy
 
 import (
 	"bufio"
-	"github.com/elazarl/goproxy/transport"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,17 +23,13 @@ type ProxyHttpServer struct {
 	reqHandlers   []ReqHandler
 	respHandlers  []RespHandler
 	httpsHandlers []HttpsHandler
-	Tr            *transport.Transport
+	Tr            *http.Transport
+	// ConnectDial will be used to create TCP connections for CONNECT requests
+	// if nil Tr.Dial will be used
+	ConnectDial func(network string, addr string) (net.Conn, error)
 }
 
 var hasPort = regexp.MustCompile(`:\d+$`)
-
-func (proxy *ProxyHttpServer) copyAndClose(w io.WriteCloser, r io.Reader) {
-	io.Copy(w, r)
-	if err := w.Close(); err != nil {
-		proxy.Logger.Println("Error closing", err)
-	}
-}
 
 func copyHeaders(dst, src http.Header) {
 	for k, _ := range dst {
@@ -120,7 +116,7 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 		if resp == nil {
 			removeProxyHeaders(ctx, r)
-			ctx.RoundTrip, resp, err = proxy.Tr.DetailedRoundTrip(r)
+			resp, err = ctx.RoundTrip(r)
 			if err != nil {
 				ctx.Error = err
 				resp = proxy.filterResponse(nil, ctx)
@@ -157,12 +153,14 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 // New proxy server, logs to StdErr by default
 func NewProxyHttpServer() *ProxyHttpServer {
-	return &ProxyHttpServer{
+	proxy := ProxyHttpServer{
 		Logger:        log.New(os.Stderr, "", log.LstdFlags),
 		reqHandlers:   []ReqHandler{},
 		respHandlers:  []RespHandler{},
 		httpsHandlers: []HttpsHandler{},
-		Tr: &transport.Transport{TLSClientConfig: tlsClientSkipVerify,
-			Proxy: transport.ProxyFromEnvironment},
+		Tr: &http.Transport{TLSClientConfig: tlsClientSkipVerify,
+			Proxy: http.ProxyFromEnvironment},
 	}
+	proxy.ConnectDial = dialerFromEnv(&proxy)
+	return &proxy
 }
