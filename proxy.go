@@ -147,16 +147,20 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		// Trying to buffer output for chunked encoding
 		buf := make([]byte, 1024)
 		for {
-		    // read a chunk
-		    n, err := resp.Body.Read(buf)
-		    if err != nil && err != io.EOF { panic(err) }
-		    if n == 0 { break }
+			// read a chunk
+			n, err := resp.Body.Read(buf)
+			if err != nil && err != io.EOF {
+				panic(err)
+			}
+			if n == 0 {
+				break
+			}
 
-		    // write a chunk
-		    if _, err := w.Write(buf[:n]); err != nil {
+			// write a chunk
+			if _, err := w.Write(buf[:n]); err != nil {
 				//panic(err)
 				break
-		    } else if f, ok := w.(http.Flusher); ok {
+			} else if f, ok := w.(http.Flusher); ok {
 				// Response writer with flush support.
 				f.Flush()
 			}
@@ -164,7 +168,7 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		}
 
 		if err = resp.Body.Close(); err != nil {
-		    ctx.Warnf("Can't close response body %v", err)
+			ctx.Warnf("Can't close response body %v", err)
 		}
 	}
 }
