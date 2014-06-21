@@ -7,9 +7,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"os"
 	"regexp"
 	"sync/atomic"
+	"github.com/twinj/uuid"
 )
 
 // The basic proxy type. Implements http.Handler.
@@ -95,10 +97,11 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	if r.Method == "CONNECT" {
 		proxy.handleHttps(w, r)
 	} else {
-		ctx := &ProxyCtx{Req: r, Session: atomic.AddInt64(&proxy.sess, 1), proxy: proxy}
+		u := uuid.NewV4()
+		ctx := &ProxyCtx{Req: r, Session: atomic.AddInt64(&proxy.sess, 1), proxy: proxy, Uuid: u}
 
 		var err error
-		ctx.Logf("Got request %v %v %v %v", r.URL.Path, r.Host, r.Method, r.URL.String())
+		//ctx.Logf("Got request %v %v %v %v", r.URL.Path, r.Host, r.Method, r.URL.String())
 		if !r.URL.IsAbs() {
 			if r.Host == "" {
 				ctx.Warnf("non-proxy request received, without Host header")
@@ -144,21 +147,35 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		copyHeaders(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
 
-		// Trying to buffer output for chunked encoding
-		buf := make([]byte, 1024)
-		for {
-			// read a chunk
-			n, err := resp.Body.Read(buf)
-			if err != nil && err != io.EOF {
-				panic(err)
-			}
-			if n == 0 {
-				break
-			}
+		// Create a channel to send content to the writer
+		c := make(chan []byte)
 
+		// Read body from a goroutine
+		go readContent(resp.Body, c)
+
+		spath := getSocketPath("socket_srv")
+		ln, err := net.Listen("unix", spath)
+		if err != nil {
+			log.Print(err)
+			return
+		}
+
+		log.Printf("Opening socket %s, %+v", spath, ctx)
+
+		defer func(ln net.Listener, spath string){
+		    log.Printf("Closing and killing socket %s", spath)
+		    ln.Close()
+		    os.Remove(spath)
+		}(ln, spath)
+
+		// Wait for input to inject to the client
+		go waitForMessage(c, ln, ctx)
+
+		for content := range c{
 			// write a chunk
-			if _, err := w.Write(buf[:n]); err != nil {
+			if _, err := w.Write(content); err != nil {
 				//panic(err)
+				log.Printf("error writing %+v\n", err)
 				break
 			} else if f, ok := w.(http.Flusher); ok {
 				// Response writer with flush support.
@@ -167,10 +184,34 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 		}
 
-		if err = resp.Body.Close(); err != nil {
-			ctx.Warnf("Can't close response body %v", err)
-		}
+		log.Printf("Finished to read content, kill me now")
+
 	}
+}
+
+func readContent(body io.ReadCloser, c chan<- []byte) {
+	// Trying to buffer output for chunked encoding
+	buf := make([]byte, 1024)
+	for {
+		// read a chunk
+		n, err := body.Read(buf)
+		if err != nil && err != io.EOF {
+			close(c)
+			panic(err)
+		}
+		if n == 0 {
+			break
+		}
+
+		c <- buf[:n]
+	}
+
+	if err := body.Close(); err != nil {
+		log.Printf("Can't close response body %v", err)
+	}
+
+	log.Printf("Closing channel")
+	close(c)
 }
 
 // New proxy server, logs to StdErr by default
@@ -185,4 +226,109 @@ func NewProxyHttpServer() *ProxyHttpServer {
 	}
 	proxy.ConnectDial = dialerFromEnv(&proxy)
 	return &proxy
+}
+
+func getLocalIp() (net.IP, error) {
+	var ip net.IP;
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ip, err
+	}
+
+	for _, a := range addrs {
+		if ipnet, ok := a.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			return ipnet.IP, nil
+		}
+	}
+
+	return ip, nil
+}
+
+func waitForMessage(ch chan<- []byte, ln net.Listener, ctx *ProxyCtx) {
+
+    for {
+	/*select {
+	case <- quit:
+	    log.Printf("quitting loop")
+	    return
+	default:*/
+	    log.Printf("waiting for new connections")
+	    // This will block
+	    conn, err := ln.Accept()
+	    if err != nil {
+		    log.Print(err)
+		    break
+	    }
+	    log.Printf("reading message")
+	    go readMessage(conn, ch)
+	//}
+    }
+
+    /*sigc := make(chan os.Signal, 1)
+    signal.Notify(sigc, os.Interrupt, os.Kill, syscall.SIGTERM)
+    go func(c chan os.Signal, spath string) {
+        // Wait for a SIGINT or SIGKILL:
+        sig := <-c
+        log.Printf("Caught signal %s: shutting down.", sig)
+        // Stop listening (and unlink the socket if unix type):
+        ln.Close()
+        //os.Remove(spath)
+        // And we're done:
+        os.Exit(0)
+    }(sigc, spath)*/
+
+}
+
+func readMessage(c net.Conn, ch chan<- []byte) {
+    defer c.Close()
+
+    msg := make([]byte, 1024)
+
+    for {
+        n, err := c.Read(msg)
+
+        if err != nil && err != io.EOF {
+            log.Printf("ERROR: read\n")
+            log.Print(err)
+            return
+        }
+
+        if n != 0 {
+	    ch <- msg[:n]
+        }
+
+        if err == io.EOF {
+            return
+        }
+    }
+}
+
+func createTempDir(name string) (string, error) {
+	tmpdir := filepath.Join(os.TempDir(), name)
+
+        _, err := os.Stat(tmpdir)
+
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Create temp directory
+			err = os.MkdirAll(tmpdir, 0777)
+		}
+
+	}
+
+        return tmpdir, err
+}
+
+func getSocketPath(name string) (string) {
+    tmpdir, err := createTempDir("proxy-sockets")
+
+    // err should be nil if we just created the directory
+    if err != nil {
+            panic(err)
+    }
+
+    spath := filepath.Join(tmpdir, name)
+    log.Printf("creating socket: %s", spath)
+
+    return spath
 }
