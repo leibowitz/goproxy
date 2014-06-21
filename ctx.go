@@ -1,9 +1,9 @@
 package goproxy
 
 import (
+	"github.com/twinj/uuid"
 	"net/http"
 	"regexp"
-	"github.com/twinj/uuid"
 )
 
 // ProxyCtx is the Proxy context, contains useful information about every request. It is passed to
@@ -21,7 +21,7 @@ type ProxyCtx struct {
 	UserData interface{}
 	// Will connect a request to a response
 	Session int64
-	Uuid uuid.UUID
+	Uuid    uuid.UUID
 	proxy   *ProxyHttpServer
 }
 

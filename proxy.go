@@ -2,16 +2,16 @@ package goproxy
 
 import (
 	"bufio"
+	"github.com/twinj/uuid"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sync/atomic"
-	"github.com/twinj/uuid"
 )
 
 // The basic proxy type. Implements http.Handler.
@@ -147,49 +147,54 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		copyHeaders(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
 
-		// Create a channel to send content to the writer
-		c := make(chan []byte)
-
-		// Read body from a goroutine
-		go readContent(resp.Body, c)
-
-		spath := getSocketPath("socket_srv")
-		ln, err := net.Listen("unix", spath)
-		if err != nil {
-			log.Print(err)
-			return
-		}
-
-		log.Printf("Opening socket %s, %+v", spath, ctx)
-
-		defer func(ln net.Listener, spath string){
-		    log.Printf("Closing and killing socket %s", spath)
-		    ln.Close()
-		    os.Remove(spath)
-		}(ln, spath)
-
-		// Wait for input to inject to the client
-		go waitForMessage(c, ln, ctx)
-
-		for content := range c{
-			// write a chunk
-			if _, err := w.Write(content); err != nil {
-				//panic(err)
-				log.Printf("error writing %+v\n", err)
-				break
-			} else if f, ok := w.(http.Flusher); ok {
-				// Response writer with flush support.
-				f.Flush()
-			}
-
-		}
-
-		log.Printf("Finished to read content, kill me now")
+		ctx.Logf("UUID: %s", ctx.Uuid.String())
+		WriteBody(ctx, resp.Body, w, ctx.Uuid.String())
+		ctx.Logf("Finished to read content, kill me now")
 
 	}
 }
 
-func readContent(body io.ReadCloser, c chan<- []byte) {
+func WriteBody(ctx *ProxyCtx, reader io.ReadCloser, writer io.Writer, socketName string) {
+	// Create a channel to send content to the writer
+	c := make(chan []byte)
+
+	// Read body from a goroutine
+	go readContent(ctx, reader, c)
+
+	spath := getSocketPath(socketName)
+	ln, err := net.Listen("unix", spath)
+	if err != nil {
+		log.Print(err)
+		return
+	}
+
+	ctx.Logf("Opening socket %s", spath)
+
+	defer func(ln net.Listener, spath string) {
+		ctx.Logf("Closing and killing socket %s", spath)
+		ln.Close()
+		os.Remove(spath)
+	}(ln, spath)
+
+	// Wait for input to inject to the client
+	go waitForMessage(ctx, c, ln)
+
+	for content := range c {
+		// write a chunk
+		if _, err := writer.Write(content); err != nil {
+			//panic(err)
+			ctx.Logf("error writing %+v\n", err)
+			break
+		} else if flusher, ok := writer.(http.Flusher); ok {
+			// Response writer with flush support.
+			flusher.Flush()
+		}
+
+	}
+
+}
+
+func readContent(ctx *ProxyCtx, body io.ReadCloser, c chan<- []byte) {
 	// Trying to buffer output for chunked encoding
 	buf := make([]byte, 1024)
 	for {
@@ -207,10 +212,9 @@ func readContent(body io.ReadCloser, c chan<- []byte) {
 	}
 
 	if err := body.Close(); err != nil {
-		log.Printf("Can't close response body %v", err)
+		ctx.Logf("Can't close response body %v", err)
 	}
 
-	log.Printf("Closing channel")
 	close(c)
 }
 
@@ -229,7 +233,7 @@ func NewProxyHttpServer() *ProxyHttpServer {
 }
 
 func getLocalIp() (net.IP, error) {
-	var ip net.IP;
+	var ip net.IP
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return ip, err
@@ -244,69 +248,69 @@ func getLocalIp() (net.IP, error) {
 	return ip, nil
 }
 
-func waitForMessage(ch chan<- []byte, ln net.Listener, ctx *ProxyCtx) {
+func waitForMessage(ctx *ProxyCtx, ch chan<- []byte, ln net.Listener) {
 
-    for {
-	/*select {
-	case <- quit:
-	    log.Printf("quitting loop")
-	    return
-	default:*/
-	    log.Printf("waiting for new connections")
-	    // This will block
-	    conn, err := ln.Accept()
-	    if err != nil {
-		    log.Print(err)
-		    break
-	    }
-	    log.Printf("reading message")
-	    go readMessage(conn, ch)
-	//}
-    }
+	for {
+		/*select {
+		case <- quit:
+		    log.Printf("quitting loop")
+		    return
+		default:*/
+		ctx.Logf("waiting for new connections")
+		// This will block
+		conn, err := ln.Accept()
+		if err != nil {
+			log.Print(err)
+			break
+		}
+		ctx.Logf("reading message")
+		go readMessage(conn, ch)
+		//}
+	}
 
-    /*sigc := make(chan os.Signal, 1)
-    signal.Notify(sigc, os.Interrupt, os.Kill, syscall.SIGTERM)
-    go func(c chan os.Signal, spath string) {
-        // Wait for a SIGINT or SIGKILL:
-        sig := <-c
-        log.Printf("Caught signal %s: shutting down.", sig)
-        // Stop listening (and unlink the socket if unix type):
-        ln.Close()
-        //os.Remove(spath)
-        // And we're done:
-        os.Exit(0)
-    }(sigc, spath)*/
+	/*sigc := make(chan os.Signal, 1)
+	  signal.Notify(sigc, os.Interrupt, os.Kill, syscall.SIGTERM)
+	  go func(c chan os.Signal, spath string) {
+	      // Wait for a SIGINT or SIGKILL:
+	      sig := <-c
+	      log.Printf("Caught signal %s: shutting down.", sig)
+	      // Stop listening (and unlink the socket if unix type):
+	      ln.Close()
+	      //os.Remove(spath)
+	      // And we're done:
+	      os.Exit(0)
+	  }(sigc, spath)*/
 
 }
 
 func readMessage(c net.Conn, ch chan<- []byte) {
-    defer c.Close()
+	defer c.Close()
 
-    msg := make([]byte, 1024)
+	msg := make([]byte, 1024)
 
-    for {
-        n, err := c.Read(msg)
+	for {
+		n, err := c.Read(msg)
 
-        if err != nil && err != io.EOF {
-            log.Printf("ERROR: read\n")
-            log.Print(err)
-            return
-        }
+		if err != nil && err != io.EOF {
+			log.Printf("ERROR: read\n")
+			log.Print(err)
+			return
+		}
 
-        if n != 0 {
-	    ch <- msg[:n]
-        }
+		if n != 0 {
+			ch <- msg[:n]
+		}
 
-        if err == io.EOF {
-            return
-        }
-    }
+		if err == io.EOF {
+			return
+		}
+	}
 }
 
 func createTempDir(name string) (string, error) {
 	tmpdir := filepath.Join(os.TempDir(), name)
 
-        _, err := os.Stat(tmpdir)
+	_, err := os.Stat(tmpdir)
 
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -316,19 +320,19 @@ func createTempDir(name string) (string, error) {
 
 	}
 
-        return tmpdir, err
+	return tmpdir, err
 }
 
-func getSocketPath(name string) (string) {
-    tmpdir, err := createTempDir("proxy-sockets")
+func getSocketPath(name string) string {
+	tmpdir, err := createTempDir("proxy-sockets")
 
-    // err should be nil if we just created the directory
-    if err != nil {
-            panic(err)
-    }
+	// err should be nil if we just created the directory
+	if err != nil {
+		panic(err)
+	}
 
-    spath := filepath.Join(tmpdir, name)
-    log.Printf("creating socket: %s", spath)
+	spath := filepath.Join(tmpdir, name)
+	log.Printf("creating socket: %s", spath)
 
-    return spath
+	return spath
 }
