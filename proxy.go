@@ -161,17 +161,14 @@ func WriteBody(ctx *ProxyCtx, reader io.ReadCloser, writer io.Writer, socketName
 	// Read body from a goroutine
 	go readContent(ctx, reader, c)
 
-	spath := getSocketPath(socketName)
+	spath := getSocketPath(ctx, socketName)
 	ln, err := net.Listen("unix", spath)
 	if err != nil {
-		log.Print(err)
+		ctx.Logf("err creating socket %s", err)
 		return
 	}
 
-	ctx.Logf("Opening socket %s", spath)
-
 	defer func(ln net.Listener, spath string) {
-		ctx.Logf("Closing and killing socket %s", spath)
 		ln.Close()
 		os.Remove(spath)
 	}(ln, spath)
@@ -260,11 +257,11 @@ func waitForMessage(ctx *ProxyCtx, ch chan<- []byte, ln net.Listener) {
 		// This will block
 		conn, err := ln.Accept()
 		if err != nil {
-			log.Print(err)
+			ctx.Logf("err waiting for new connection %s", err)
 			break
 		}
 		ctx.Logf("reading message")
-		go readMessage(conn, ch)
+		go readMessage(ctx, conn, ch)
 		//}
 	}
 
@@ -283,7 +280,7 @@ func waitForMessage(ctx *ProxyCtx, ch chan<- []byte, ln net.Listener) {
 
 }
 
-func readMessage(c net.Conn, ch chan<- []byte) {
+func readMessage(ctx *ProxyCtx, c net.Conn, ch chan<- []byte) {
 	defer c.Close()
 
 	msg := make([]byte, 1024)
@@ -292,8 +289,7 @@ func readMessage(c net.Conn, ch chan<- []byte) {
 		n, err := c.Read(msg)
 
 		if err != nil && err != io.EOF {
-			log.Printf("ERROR: read\n")
-			log.Print(err)
+			ctx.Logf("error reading input message %s", err)
 			return
 		}
 
@@ -323,7 +319,7 @@ func createTempDir(name string) (string, error) {
 	return tmpdir, err
 }
 
-func getSocketPath(name string) string {
+func getSocketPath(ctx *ProxyCtx, name string) string {
 	tmpdir, err := createTempDir("proxy-sockets")
 
 	// err should be nil if we just created the directory
@@ -332,7 +328,6 @@ func getSocketPath(name string) string {
 	}
 
 	spath := filepath.Join(tmpdir, name)
-	log.Printf("creating socket: %s", spath)
 
 	return spath
 }
