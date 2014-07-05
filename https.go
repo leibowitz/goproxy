@@ -224,20 +224,23 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				chunked := newChunkedWriter(rawClientTls)
 				WriteBody(ctx, resp.Body, chunked, ctx.Uuid.String())
 				/*
-				//ctx.Logf("-Sending chunked body")
+				ctx.Logf("-Sending chunked body")
 				if _, err := io.Copy(chunked, resp.Body); err != nil {
 					ctx.Warnf("Cannot write TLS response body from mitm'd client: %v", err)
 					return
+				}*/
+
+				ctx.Logf("Finished to read/write Body, Closing")
+				if err := resp.Body.Close(); err != nil {
+					ctx.Logf("Can't close response body %v", err)
 				}
-				*/
+
 				if err := chunked.Close(); err != nil {
 					ctx.Warnf("Cannot write TLS chunked EOF from mitm'd client: %v", err)
-					return
 				}
+
 				if _, err = io.WriteString(rawClientTls, "\r\n"); err != nil {
 					ctx.Warnf("Cannot write TLS response chunked trailer from mitm'd client: %v - closing body just in case", err)
-					resp.Body.Close()
-					return
 				}
 				//resp.Body.Close()
 			}

@@ -147,9 +147,14 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		copyHeaders(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
 
-		ctx.Logf("UUID: %s", ctx.Uuid.String())
+		//ctx.Logf("UUID: %s", ctx.Uuid.String())
 		WriteBody(ctx, resp.Body, w, ctx.Uuid.String())
-		ctx.Logf("Finished to read content, kill me now")
+		//ctx.Logf("Finished to read content, kill me now")
+
+		ctx.Logf("Finished to read/write Body, Closing")
+		if err := resp.Body.Close(); err != nil {
+			ctx.Logf("Can't close response body %v", err)
+		}
 
 	}
 }
@@ -194,22 +199,22 @@ func WriteBody(ctx *ProxyCtx, reader io.ReadCloser, writer io.Writer, socketName
 func readContent(ctx *ProxyCtx, body io.ReadCloser, c chan<- []byte) {
 	// Trying to buffer output for chunked encoding
 	buf := make([]byte, 1024)
+
 	for {
 		// read a chunk
 		n, err := body.Read(buf)
-		if err != nil && err != io.EOF {
-			close(c)
-			panic(err)
+		if n > 0 {
+			res := make([]byte, n)
+			copy(res, buf[:n])
+			c <- res
+			//c <- buf[:n]
 		}
-		if n == 0 {
+		if err != nil {
+			//close(c)
+			//c <- nil
 			break
+			//panic(err)
 		}
-
-		c <- buf[:n]
-	}
-
-	if err := body.Close(); err != nil {
-		ctx.Logf("Can't close response body %v", err)
 	}
 
 	close(c)
