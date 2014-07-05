@@ -3,6 +3,7 @@ package goproxy
 import (
 	"bufio"
 	"github.com/twinj/uuid"
+    "time"
 	"io"
 	"log"
 	"net"
@@ -150,6 +151,11 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		//ctx.Logf("UUID: %s", ctx.Uuid.String())
 		WriteBody(ctx, resp.Body, w, ctx.Uuid.String())
 		//ctx.Logf("Finished to read content, kill me now")
+
+        if ctx.Delay != 0 {
+            ctx.Logf("Sleeping for %d seconds", ctx.Delay)
+            time.Sleep(time.Second * time.Duration(ctx.Delay))
+        }
 
 		ctx.Logf("Finished to read/write Body, Closing")
 		if err := resp.Body.Close(); err != nil {
