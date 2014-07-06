@@ -236,11 +236,6 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 					ctx.Logf("Can't close response body %v", err)
 				}
 
-                if ctx.Delay != 0 {
-                    ctx.Logf("Sleeping for %d seconds", ctx.Delay)
-                    time.Sleep(time.Second * time.Duration(ctx.Delay))
-                }
-
 				if err := chunked.Close(); err != nil {
 					ctx.Warnf("Cannot write TLS chunked EOF from mitm'd client: %v", err)
 				}

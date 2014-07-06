@@ -152,11 +152,6 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		WriteBody(ctx, resp.Body, w, ctx.Uuid.String())
 		//ctx.Logf("Finished to read content, kill me now")
 
-        if ctx.Delay != 0 {
-            ctx.Logf("Sleeping for %d seconds", ctx.Delay)
-            time.Sleep(time.Second * time.Duration(ctx.Delay))
-        }
-
 		ctx.Logf("Finished to read/write Body, Closing")
 		if err := resp.Body.Close(); err != nil {
 			ctx.Logf("Can't close response body %v", err)
@@ -222,6 +217,11 @@ func readContent(ctx *ProxyCtx, body io.ReadCloser, c chan<- []byte) {
 			//panic(err)
 		}
 	}
+
+    if ctx.Delay != 0 {
+        ctx.Logf("Sleeping for %d seconds before closing", ctx.Delay)
+        time.Sleep(time.Second * time.Duration(ctx.Delay))
+    }
 
 	close(c)
 }
