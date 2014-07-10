@@ -3,7 +3,6 @@ package goproxy
 import (
 	"bufio"
 	"crypto/tls"
-    "time"
 	"errors"
 	"io"
 	"io/ioutil"
