@@ -3,7 +3,6 @@ package goproxy
 import (
 	"bufio"
 	"github.com/twinj/uuid"
-    "time"
 	"io"
 	"log"
 	"net"
@@ -13,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sync/atomic"
+	"time"
 )
 
 // The basic proxy type. Implements http.Handler.
@@ -161,13 +161,15 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 }
 
 func WriteBody(ctx *ProxyCtx, reader io.ReadCloser, writer io.Writer, socketName string) {
-	// Create a channel to send content to the writer
+	// Create a channel to send content to the client
 	c := make(chan []byte)
+	quit := make(chan bool)
 
 	// Read body from a goroutine
-	go readContent(ctx, reader, c)
+	go readContent(ctx, reader, c, quit)
 
 	spath := getSocketPath(ctx, socketName)
+
 	ln, err := net.Listen("unix", spath)
 	if err != nil {
 		ctx.Logf("err creating socket %s", err)
@@ -180,7 +182,7 @@ func WriteBody(ctx *ProxyCtx, reader io.ReadCloser, writer io.Writer, socketName
 	}(ln, spath)
 
 	// Wait for input to inject to the client
-	go waitForMessage(ctx, c, ln)
+	go waitForMessage(ctx, c, ln, quit)
 
 	for content := range c {
 		// write a chunk
@@ -194,10 +196,9 @@ func WriteBody(ctx *ProxyCtx, reader io.ReadCloser, writer io.Writer, socketName
 		}
 
 	}
-
 }
 
-func readContent(ctx *ProxyCtx, body io.ReadCloser, c chan<- []byte) {
+func readContent(ctx *ProxyCtx, body io.ReadCloser, c chan<- []byte, quit chan bool) {
 	// Trying to buffer output for chunked encoding
 	buf := make([]byte, 1024)
 
@@ -207,7 +208,13 @@ func readContent(ctx *ProxyCtx, body io.ReadCloser, c chan<- []byte) {
 		if n > 0 {
 			res := make([]byte, n)
 			copy(res, buf[:n])
-			c <- res
+			select {
+			case c <- res:
+
+			case <-time.After(1 * time.Second): //adjust the time as needed
+				//handle the timeout (return an error or download the file yourself?)
+				goto sleep
+			}
 			//c <- buf[:n]
 		}
 		if err != nil {
@@ -218,12 +225,22 @@ func readContent(ctx *ProxyCtx, body io.ReadCloser, c chan<- []byte) {
 		}
 	}
 
-    if ctx.Delay != 0 {
-        ctx.Logf("Sleeping for %d seconds before closing", ctx.Delay)
-        time.Sleep(time.Second * time.Duration(ctx.Delay))
-    }
+sleep:
+
+	if ctx.Delay != 0 {
+		ctx.Logf("Sleeping for %d seconds before closing", ctx.Delay)
+		time.Sleep(time.Second * time.Duration(ctx.Delay))
+	}
 
 	close(c)
+	select {
+	case quit <- true:
+	case <-time.After(1 * time.Second): //adjust the time as needed
+		//handle the timeout (return an error or download the file yourself?)
+		ctx.Logf("waiting for quit timeout")
+	default:
+	}
+	close(quit)
 }
 
 // New proxy server, logs to StdErr by default
@@ -256,7 +273,7 @@ func getLocalIp() (net.IP, error) {
 	return ip, nil
 }
 
-func waitForMessage(ctx *ProxyCtx, ch chan<- []byte, ln net.Listener) {
+func waitForMessage(ctx *ProxyCtx, ch chan<- []byte, ln net.Listener, quit chan bool) {
 
 	for {
 		/*select {
@@ -264,15 +281,13 @@ func waitForMessage(ctx *ProxyCtx, ch chan<- []byte, ln net.Listener) {
 		    log.Printf("quitting loop")
 		    return
 		default:*/
-		ctx.Logf("waiting for new connections")
 		// This will block
 		conn, err := ln.Accept()
 		if err != nil {
 			ctx.Logf("err waiting for new connection %s", err)
 			break
 		}
-		ctx.Logf("reading message")
-		go readMessage(ctx, conn, ch)
+		go readMessage(ctx, conn, ch, quit)
 		//}
 	}
 
@@ -291,7 +306,7 @@ func waitForMessage(ctx *ProxyCtx, ch chan<- []byte, ln net.Listener) {
 
 }
 
-func readMessage(ctx *ProxyCtx, c net.Conn, ch chan<- []byte) {
+func readMessage(ctx *ProxyCtx, c net.Conn, ch chan<- []byte, quit chan bool) {
 	defer c.Close()
 
 	msg := make([]byte, 1024)
@@ -305,7 +320,22 @@ func readMessage(ctx *ProxyCtx, c net.Conn, ch chan<- []byte) {
 		}
 
 		if n != 0 {
-			ch <- msg[:n]
+			select {
+			case <-quit:
+				ctx.Logf("ending readMessage (quit)")
+				return
+			default:
+			}
+			res := make([]byte, n)
+			copy(res, msg[:n])
+			select {
+			case ch <- res:
+			case <-time.After(5 * time.Second): //adjust the time as needed
+				//handle the timeout (return an error or download the file yourself?)
+				ctx.Logf("write timeout")
+				return
+			default:
+			}
 		}
 
 		if err == io.EOF {
