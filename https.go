@@ -26,17 +26,16 @@ const (
 )
 
 var (
-	OkConnect       = &ConnectAction{Action: ConnectAccept}
-	MitmConnect     = &ConnectAction{Action: ConnectMitm}
-	HTTPMitmConnect = &ConnectAction{Action: ConnectHTTPMitm}
-	RejectConnect   = &ConnectAction{Action: ConnectReject}
+	OkConnect       = &ConnectAction{Action: ConnectAccept, TLSConfig: TLSConfigFromCA(&GoproxyCa)}
+	MitmConnect     = &ConnectAction{Action: ConnectMitm, TLSConfig: TLSConfigFromCA(&GoproxyCa)}
+	HTTPMitmConnect = &ConnectAction{Action: ConnectHTTPMitm, TLSConfig: TLSConfigFromCA(&GoproxyCa)}
+	RejectConnect   = &ConnectAction{Action: ConnectReject, TLSConfig: TLSConfigFromCA(&GoproxyCa)}
 )
 
 type ConnectAction struct {
 	Action    ConnectActionLiteral
-	TlsConfig *tls.Config
-	Ca        *tls.Certificate
 	Hijack    func(req *http.Request, client net.Conn, ctx *ProxyCtx)
+	TLSConfig func(host string, ctx *ProxyCtx) (*tls.Config, error)
 }
 
 func stripPort(s string) string {
@@ -76,13 +75,15 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 
 	ctx.Logf("Running %d CONNECT handlers", len(proxy.httpsHandlers))
 	todo, host := OkConnect, r.URL.Host
-	ctx.Req = r
-	for _, h := range proxy.httpsHandlers {
+	for i, h := range proxy.httpsHandlers {
 		newtodo, newhost := h.HandleConnect(host, ctx)
+
+		// If found a result, break the loop immediately
 		if newtodo != nil {
 			todo, host = newtodo, newhost
+			ctx.Logf("on %dth handler: %v %s", i, todo, host)
+			break
 		}
-		ctx.Logf("handler: %v %s", todo, host)
 	}
 	switch todo.Action {
 	case ConnectAccept:
@@ -145,25 +146,18 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 		// still handling the request even after hijacking the connection. Those HTTP CONNECT
 		// request can take forever, and the server will be stuck when "closed".
 		// TODO: Allow Server.Close() mechanism to shut down this connection as nicely as possible
-		ca := todo.Ca
-		if ca == nil {
-			ca = &GoproxyCa
+		tlsConfig := defaultTLSConfig
+		if todo.TLSConfig != nil {
+			var err error
+			tlsConfig, err = todo.TLSConfig(host, ctx)
+			if err != nil {
+				httpError(proxyClient, ctx, err)
+				return
+			}
 		}
-		cert, err := signHost(*ca, []string{stripPort(host)})
-		if err != nil {
-			ctx.Warnf("Cannot sign host certificate with provided CA: %s", err)
-			return
-		}
-		tlsConfig := tls.Config{}
-		if todo.TlsConfig != nil {
-			tlsConfig = *todo.TlsConfig
-		} else {
-			tlsConfig = *defaultTlsConfig
-		}
-		tlsConfig.Certificates = append(tlsConfig.Certificates, cert)
 		go func() {
 			//TODO: cache connections to the remote website
-			rawClientTls := tls.Server(proxyClient, &tlsConfig)
+			rawClientTls := tls.Server(proxyClient, tlsConfig)
 			if err := rawClientTls.Handshake(); err != nil {
 				ctx.Warnf("Cannot handshake client %v %v", r.Host, err)
 				return
@@ -179,8 +173,14 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 					ctx.Warnf("Cannot read TLS request from mitm'd client %v %v", r.Host, err)
 					return
 				}
+				req.RemoteAddr = r.RemoteAddr // since we're converting the request, need to carry over the original connecting IP as well
 				ctx.Logf("req %v", r.Host)
 				req.URL, err = url.Parse("https://" + r.Host + req.URL.String())
+				
+				// Bug fix which goproxy fails to provide request 
+				// information URL in the context when does HTTPS MITM 
+				ctx.Req = req
+				
 				req, resp := proxy.filterRequest(req, ctx)
 				if resp == nil {
 					if err != nil {
@@ -188,7 +188,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 						return
 					}
 					removeProxyHeaders(ctx, req)
-					resp, err = proxy.Tr.RoundTrip(req)
+					resp, err = ctx.RoundTrip(req)
 					if err != nil {
 						ctx.Warnf("Cannot read TLS response from mitm'd server %v", err)
 						return
@@ -253,14 +253,14 @@ func httpError(w io.WriteCloser, ctx *ProxyCtx, err error) {
 	}
 }
 
-func copyAndClose(ctx *ProxyCtx, w net.Conn, r io.Reader) {
+func copyAndClose(ctx *ProxyCtx, w, r net.Conn) {
 	connOk := true
 	if _, err := io.Copy(w, r); err != nil {
 		connOk = false
-		ctx.Warnf("Error copying to client %s", err)
+		ctx.Warnf("Error copying to client: %s", err)
 	}
-	if err := w.Close(); err != nil && connOk {
-		ctx.Warnf("Error closing %s", err)
+	if err := r.Close(); err != nil && connOk {
+		ctx.Warnf("Error closing: %s", err)
 	}
 }
 
@@ -349,4 +349,18 @@ func (proxy *ProxyHttpServer) NewConnectDialToProxy(https_proxy string) func(net
 		}
 	}
 	return nil
+}
+
+func TLSConfigFromCA(ca *tls.Certificate) func(host string, ctx *ProxyCtx) (*tls.Config, error) {
+	return func(host string, ctx *ProxyCtx) (*tls.Config, error) {
+		config := *defaultTLSConfig
+		ctx.Logf("signing for %s", stripPort(host))
+		cert, err := signHost(*ca, []string{stripPort(host)})
+		if err != nil {
+			ctx.Warnf("Cannot sign host certificate with provided CA: %s", err)
+			return nil, err
+		}
+		config.Certificates = append(config.Certificates, cert)
+		return &config, nil
+	}
 }

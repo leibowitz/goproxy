@@ -18,9 +18,9 @@ Typical usage is
 
 Adding a header to each request
 
-	proxy.OnRequest().DoFunc(func(r *http.Request,ctx *goproxy.ProxyCtx)*http.Request{
+	proxy.OnRequest().DoFunc(func(r *http.Request,ctx *goproxy.ProxyCtx) (*http.Request, *http.Response){
 		r.Header.Set("X-GoProxy","1")
-		return r
+		return r, nil
 	})
 
 Note that the function is called before the proxy sends the request to the server
@@ -67,7 +67,7 @@ we close the body of the original repsonse, and return a new 403 response with a
 
 Example use cases:
 
-1. https://github.com/elazarl/goproxy/tree/master/examples/avgSize
+1. https://github.com/elazarl/goproxy/tree/master/examples/goproxy-avgsize
 
 To measure the average size of an Html served in your site. One can ask
 all the QA team to access the website by a proxy, and the proxy will
@@ -79,20 +79,20 @@ All requests to your web servers should be directed through the proxy,
 when the proxy will detect html pieces sent as a response to AJAX
 request, it'll send a warning email.
 
-3. https://github.com/elazarl/goproxy/blob/master/examples/httpdump/
+3. https://github.com/elazarl/goproxy/blob/master/examples/goproxy-httpdump/
 
 Generate a real traffic to your website by real users using through
 proxy. Record the traffic, and try it again for more real load testing.
 
-4. https://github.com/elazarl/goproxy/tree/master/examples/noRedditAtWorktime
+4. https://github.com/elazarl/goproxy/tree/master/examples/goproxy-no-reddit-at-worktime
 
 Will allow browsing to reddit.com between 8:00am and 17:00pm
 
-5. https://github.com/elazarl/goproxy/tree/master/examples/jqueryVersion
+5. https://github.com/elazarl/goproxy/tree/master/examples/goproxy-jquery-version
 
 Will warn if multiple versions of jquery are used in the same domain.
 
-6. https://github.com/elazarl/goproxy/blob/master/examples/upside-down-ternet/
+6. https://github.com/elazarl/goproxy/blob/master/examples/goproxy-upside-down-ternet/
 
 Modifies image files in an HTTP response via goproxy's image extension found in ext/.
 
