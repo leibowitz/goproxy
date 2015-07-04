@@ -23,7 +23,7 @@ type ProxyCtx struct {
 	Session int64
 	Uuid    uuid.UUID
 	proxy   *ProxyHttpServer
-    Delay   int32
+	Delay   int32
 }
 
 type RoundTripper interface {

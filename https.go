@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/tls"
 	"errors"
+	"github.com/twinj/uuid"
 	"io"
 	"io/ioutil"
 	"net"
@@ -13,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"github.com/twinj/uuid"
 )
 
 type ConnectActionLiteral int
@@ -224,11 +224,11 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 				chunked := newChunkedWriter(rawClientTls)
 				WriteBody(ctx, resp.Body, chunked, ctx.Uuid.String())
 				/*
-				ctx.Logf("-Sending chunked body")
-				if _, err := io.Copy(chunked, resp.Body); err != nil {
-					ctx.Warnf("Cannot write TLS response body from mitm'd client: %v", err)
-					return
-				}*/
+					ctx.Logf("-Sending chunked body")
+					if _, err := io.Copy(chunked, resp.Body); err != nil {
+						ctx.Warnf("Cannot write TLS response body from mitm'd client: %v", err)
+						return
+					}*/
 
 				ctx.Logf("Finished to read/write Body, Closing")
 				if err := resp.Body.Close(); err != nil {

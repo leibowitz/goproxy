@@ -1,9 +1,9 @@
 package main
 
 import (
+	"flag"
 	"github.com/leibowitz/goproxy"
 	"log"
-	"flag"
 	"net"
 	"net/http"
 )
