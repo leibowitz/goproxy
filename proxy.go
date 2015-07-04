@@ -7,7 +7,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,12 +20,13 @@ type ProxyHttpServer struct {
 	// see http://golang.org/src/pkg/sync/atomic/doc.go#L41
 	sess int64
 	// setting Verbose to true will log information on each request sent to the proxy
-	Verbose       bool
-	Logger        *log.Logger
-	reqHandlers   []ReqHandler
-	respHandlers  []RespHandler
-	httpsHandlers []HttpsHandler
-	Tr            *http.Transport
+	Verbose         bool
+	Logger          *log.Logger
+	NonproxyHandler http.Handler
+	reqHandlers     []ReqHandler
+	respHandlers    []RespHandler
+	httpsHandlers   []HttpsHandler
+	Tr              *http.Transport
 	// ConnectDial will be used to create TCP connections for CONNECT requests
 	// if nil Tr.Dial will be used
 	ConnectDial func(network string, addr string) (net.Conn, error)
@@ -83,7 +83,9 @@ func removeProxyHeaders(ctx *ProxyCtx, r *http.Request) {
 	// curl can add that, see
 	// http://homepage.ntlworld.com/jonathan.deboynepollard/FGA/web-proxy-connection-header.html
 	r.Header.Del("Proxy-Connection")
-	// Connection is single hop Header:
+	r.Header.Del("Proxy-Authenticate")
+	r.Header.Del("Proxy-Authorization")
+	// Connection, Authenticate and Authorization are single hop Header:
 	// http://www.w3.org/Protocols/rfc2616/rfc2616.txt
 	// 14.10 Connection
 	//   The Connection general-header field allows the sender to specify
@@ -104,17 +106,8 @@ func (proxy *ProxyHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		var err error
 		//ctx.Logf("Got request %v %v %v %v", r.URL.Path, r.Host, r.Method, r.URL.String())
 		if !r.URL.IsAbs() {
-			if r.Host == "" {
-				ctx.Warnf("non-proxy request received, without Host header")
-				http.Error(w, err.Error(), 500)
-				return
-			}
-			r.URL, err = url.Parse("http://" + r.Host + r.URL.Path)
-			if err != nil {
-				ctx.Warnf("unparsable path or host received, by non-proxy request: %+#v", r.URL.Path)
-				http.Error(w, err.Error(), 500)
-				return
-			}
+			proxy.NonproxyHandler.ServeHTTP(w, r)
+			return
 		}
 		r, resp := proxy.filterRequest(r, ctx)
 
@@ -250,6 +243,9 @@ func NewProxyHttpServer() *ProxyHttpServer {
 		reqHandlers:   []ReqHandler{},
 		respHandlers:  []RespHandler{},
 		httpsHandlers: []HttpsHandler{},
+		NonproxyHandler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			http.Error(w, "This is a proxy server. Does not respond to non-proxy requests.", 500)
+		}),
 		Tr: &http.Transport{TLSClientConfig: tlsClientSkipVerify,
 			Proxy: http.ProxyFromEnvironment},
 	}

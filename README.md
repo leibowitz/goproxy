@@ -1,5 +1,7 @@
 # Introduction
 
+[![Join the chat at https://gitter.im/elazarl/goproxy](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/elazarl/goproxy?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+
 Package goproxy provides a customizable HTTP proxy library for Go (golang),
 
 It supports regular HTTP proxy, HTTPS through CONNECT, and "hijacking" HTTPS
@@ -16,6 +18,15 @@ and [in Firefox](http://www.wikihow.com/Enter-Proxy-Settings-in-Firefox).
 
 For example, the URL you should use as proxy when running `./bin/basic` is
 `localhost:8080`, as this is the default binding for the basic proxy.
+
+## Mailing List
+
+New features would be discussed on the [mailing list](https://groups.google.com/forum/#!forum/goproxy-dev)
+before their development.
+
+## Latest Stable Release
+
+Get the latest goproxy from `gopkg.in/elazarl/goproxy.v1`.
 
 # Why not Fiddler2?
 
@@ -85,7 +96,8 @@ See additional examples in the examples directory.
 # What's New
 
   1. Ability to `Hijack` CONNECT requests. See
-[the eavesdropper example](https://github.com/elazarl/goproxy/blob/master/examples/eavesdropper/main.go#L17)
+[the eavesdropper example](https://github.com/leibowitz/goproxy/blob/master/examples/goproxy-eavesdropper/main.go#L27)
+2.  Transparent proxy support for http/https including MITM certificate generation for TLS.  See the [transparent example.](https://github.com/leibowitz/goproxy/tree/master/examples/goproxy-transparent)
 
 # License
 
