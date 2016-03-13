@@ -193,7 +193,7 @@ func WriteBody(ctx *ProxyCtx, reader io.ReadCloser, writer io.Writer, socketName
 
 func readContent(ctx *ProxyCtx, body io.ReadCloser, c chan<- []byte, quit chan bool) {
 	// Trying to buffer output for chunked encoding
-	buf := make([]byte, 1024)
+	buf := make([]byte, 4096)
 
 	for {
 		// read a chunk
